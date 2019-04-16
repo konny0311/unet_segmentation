@@ -11,7 +11,7 @@ from keras.optimizers import Adam
 from keras.utils import plot_model
 
 # SHAPE = (128, 128, 3)
-NUM_CLASSES = 2
+NUM_CLASSES = 1
 LEARNING_RATE = 0.001
 COLOR_MODE = 1
 SIZE = 128
@@ -90,26 +90,42 @@ def resize_for_model(image):
     # np形式のimageを特定の大きさにresizeする。
     return cv2.resize(image, (SIZE, SIZE))
 
-def create_images_answers(dir_path):
+def create_images_answers(dir_path, teacher=False):
     files = glob.glob(os.path.join(dir_path, '*.png'))
-    print(dir_path, len(files))
     files.sort()
+    if teacher:
+        COLOR_MODE = 0
+    else:
+        COLOR_MODE = 1
     images = [resize_for_model(cv2.imread(file, COLOR_MODE)) for file in files]
 
     return images    
 
 def prepare_data():
     train_images = create_images_answers(TRAIN_IMG_DIR)
-    train_annot = create_images_answers(TRAIN_ANNOT_DIR)
+    train_annot = create_images_answers(TRAIN_ANNOT_DIR, teacher=True)
     valid_images = create_images_answers(VALID_IMG_DIR)
-    valid_annot = create_images_answers(VALID_ANNOT_DIR)
+    valid_annot = create_images_answers(VALID_ANNOT_DIR, teacher=True)
 
-    return np.array(train_images), np.array(train_annot), np.array(valid_images), np.array(valid_annot)
+    train_images = np.array(train_images) / 255
+    train_annot = np.array(train_annot) / 255
+    valid_images = np.array(valid_images) / 255
+    valid_annot = np.array(valid_annot) / 255
+
+    return train_images, train_annot, valid_images, valid_annot
 
 
 def main():
     train, train_teacher, valid, valid_teacher = prepare_data()
+    t_shape = train_teacher.shape
+    v_shape = valid_teacher.shape
+    train_teacher = train_teacher.reshape(t_shape[0], t_shape[1], t_shape[2], 1)
+    valid_teacher = valid_teacher.reshape(v_shape[0], v_shape[1], v_shape[2], 1)
     print('shape of train', train.shape)
+    print('shape of train teacher', train_teacher.shape)
+    print('shape of valid', valid.shape)
+    print('shape of valid teacher', valid_teacher.shape)
+
     shape = (train.shape[1], train.shape[2], train.shape[3])
     model = create_unet_model(shape)
     model.compile(loss=dice_loss, optimizer=Adam(lr=LEARNING_RATE), metrics=[dice_coef])
