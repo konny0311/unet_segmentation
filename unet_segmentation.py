@@ -14,6 +14,7 @@ from keras.optimizers import Adam
 from keras.utils import plot_model
 import keras.callbacks as KC
 from history_checkpoint_callback import HistoryCheckpoint, TargetHistory
+from tools import draw_line, overlay
 
 NUM_CLASSES = 1
 LEARNING_RATE = 0.001
@@ -160,12 +161,15 @@ def create_callbacks():
 
 def predict_output(model, images, filenames):
     pred_images = model.predict(images)
+    images *= 255
     pred_images *= 255
+    images = images.astype(np.uint8)
     pred_images = pred_images.astype(np.uint8)
-    for j, image in enumerate(pred_images):
+    for j, pred_image in enumerate(pred_images):
         name = filenames[j].split('/')[-1]
         #name = 'valid{}.png'.format(str(j))
-        cv2.imwrite(PRED_DIR + name, image) 
+        res = overlay(images[j], pred_image)
+        cv2.imwrite(PRED_DIR + name, res) 
     shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)
 
 def train():
