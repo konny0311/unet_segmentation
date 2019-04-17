@@ -10,7 +10,6 @@ import keras.backend as K
 from keras.optimizers import Adam
 from keras.utils import plot_model
 
-# SHAPE = (128, 128, 3)
 NUM_CLASSES = 1
 LEARNING_RATE = 0.001
 COLOR_MODE = 1
