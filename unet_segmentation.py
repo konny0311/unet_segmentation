@@ -2,13 +2,17 @@ import numpy as np
 import glob
 import os
 import cv2
+import shutil
 from keras.engine.topology import Input
 from keras.models import Sequential, Model
-from keras.layers import Dense, Dropout, Flatten
+from keras.layers.core import Dense, Dropout, Flatten, Activation
 from keras.layers import  Conv1D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
+from keras.layers.normalization import BatchNormalization
 import keras.backend as K
 from keras.optimizers import Adam
 from keras.utils import plot_model
+import keras.callbacks as KC
+from history_checkpoint_callback import HistoryCheckpoint, TargetHistoryi
 
 NUM_CLASSES = 1
 LEARNING_RATE = 0.001
@@ -21,6 +25,10 @@ TRAIN_IMG_DIR = 'images/train/original/'
 TRAIN_ANNOT_DIR = 'images/train/annot/'
 VALID_IMG_DIR = 'images/valid/original/'
 VALID_ANNOT_DIR = 'images/valid/annot/'
+TEST_IMG_DIR = 'images/test/'
+BEST_MODEL_PATH = 'models/best_model_weights.hdf5'
+COMP_MODEL_PATH = 'models/comp_model_weights.hdf5'
+PRED_DIR = 'images/pred/'
 
 def conv_part(input_layer, filter=64, padding_same = True, first_layer = False):
     """
@@ -89,7 +97,7 @@ def resize_for_model(image):
     # np形式のimageを特定の大きさにresizeする。
     return cv2.resize(image, (SIZE, SIZE))
 
-def create_images_answers(dir_path, teacher=False):
+def create_images_answers(dir_path, teacher=False, filename=False):
     files = glob.glob(os.path.join(dir_path, '*.png'))
     files.sort()
     if teacher:
@@ -97,29 +105,55 @@ def create_images_answers(dir_path, teacher=False):
     else:
         COLOR_MODE = 1
     images = [resize_for_model(cv2.imread(file, COLOR_MODE)) for file in files]
-
-    return images    
+    if filename:
+        return images, files
+    else:
+        return images
 
 def prepare_data():
     train_images = create_images_answers(TRAIN_IMG_DIR)
-    train_annot = create_images_answers(TRAIN_ANNOT_DIR, teacher=True)
+    train_teacher = create_images_answers(TRAIN_ANNOT_DIR, teacher=True)
     valid_images = create_images_answers(VALID_IMG_DIR)
-    valid_annot = create_images_answers(VALID_ANNOT_DIR, teacher=True)
+    valid_teacher = create_images_answers(VALID_ANNOT_DIR, teacher=True)
+    test_images, test_filenames = create_images_answers(TEST_IMG_DIR, filename=True)
 
     train_images = np.array(train_images) / 255
-    train_annot = np.array(train_annot) / 255
+    train_teacher = np.array(train_teacher) / 255
     valid_images = np.array(valid_images) / 255
-    valid_annot = np.array(valid_annot) / 255
+    valid_teacher = np.array(valid_teacher) / 255
+    test_images = np.array(test_images) / 255
 
-    return train_images, train_annot, valid_images, valid_annot
-
-
-def main():
-    train, train_teacher, valid, valid_teacher = prepare_data()
     t_shape = train_teacher.shape
     v_shape = valid_teacher.shape
     train_teacher = train_teacher.reshape(t_shape[0], t_shape[1], t_shape[2], 1)
     valid_teacher = valid_teacher.reshape(v_shape[0], v_shape[1], v_shape[2], 1)
+
+    return train_images, train_teacher, valid_images, valid_teacher, test_images, test_filenames
+
+def create_callbacks():
+    callbacks = [KC.TensorBoard(),
+                HistoryCheckpoint(filepath='chart/LearningCurve_{history}.png'
+                                , verbose=1
+                                , period=2
+                                , targets=[TargetHistory.Loss, TargetHistory.DiceCoef, TargetHistory.ValidationLoss, TargetHistory.ValidationDiceCoef]
+                               ),
+                KC.ModelCheckpoint(filepath=BEST_MODEL_PATH,
+                verbose=1,
+                save_weights_only=True, #model全体を保存
+                save_best_only=True,
+                period=10)]
+
+    return callbacks
+
+def predict_output(model, test_images, test_filenames):
+    pred_images = model.predict(test_images)
+    for j, image in enumerate(pred_images):
+        name = test_filenames[j].split('/')[-1]
+        cv2.imwrite(PRED_DIR + name, image)
+    shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)
+
+def main():
+    train, train_teacher, valid, valid_teacher, test_images, test_filenames = prepare_data()
     print('shape of train', train.shape)
     print('shape of train teacher', train_teacher.shape)
     print('shape of valid', valid.shape)
@@ -130,8 +164,11 @@ def main():
     model.compile(loss=dice_loss, optimizer=Adam(lr=LEARNING_RATE), metrics=[dice_coef])
     model.summary()
     # plot_model(model)
-    history = model.fit(train, train_teacher, batch_size=BATCH_SIZE, epochs=EPOCHS, verbose=VERBOSE, validation_data=(valid, valid_teacher), shuffle=True)
+    callbacks = create_callbacks()
+    history = model.fit(train, train_teacher, batch_size=BATCH_SIZE, epochs=EPOCHS, verbose=VERBOSE, validation_data=(valid, valid_teacher), shuffle=True, callbacks=callbacks)
 
+    model.save_weights(COMP_MODEL_PATH)
+    predict_output(model, test_images, test_filenames)
 
 if __name__ == '__main__':
     main()
