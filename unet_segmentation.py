@@ -3,6 +3,7 @@ import glob
 import os
 import cv2
 import shutil
+import sys
 from keras.engine.topology import Input
 from keras.models import Sequential, Model
 from keras.layers.core import Dense, Dropout, Flatten, Activation
@@ -12,14 +13,14 @@ import keras.backend as K
 from keras.optimizers import Adam
 from keras.utils import plot_model
 import keras.callbacks as KC
-from history_checkpoint_callback import HistoryCheckpoint, TargetHistoryi
+from history_checkpoint_callback import HistoryCheckpoint, TargetHistory
 
 NUM_CLASSES = 1
 LEARNING_RATE = 0.001
 COLOR_MODE = 1
 SIZE = 128
-BATCH_SIZE = 40
-EPOCHS = 30
+BATCH_SIZE = 43
+EPOCHS = 500
 VERBOSE = 1
 TRAIN_IMG_DIR = 'images/train/original/'
 TRAIN_ANNOT_DIR = 'images/train/annot/'
@@ -43,10 +44,14 @@ def conv_part(input_layer, filter=64, padding_same = True, first_layer = False):
         layer1 = input_layer
     else:
         layer1 = MaxPooling2D()(input_layer)
-    layer2 = Conv2D(filter, 3, activation='relu', padding=pad_type)(layer1)
-    output_layer = Conv2D(filter, 3, activation='relu', padding=pad_type)(layer2)
+    layer2 = Conv2D(filter, 3, padding=pad_type)(layer1)
+    layer2_b = BatchNormalization()(layer2)
+    layer2_a = Activation(activation='relu')(layer2_b)
+    output_layer = Conv2D(filter, 3, padding=pad_type)(layer2_a)
+    output_layer_b = BatchNormalization()(output_layer)
+    output_layer_a = Activation(activation='relu')(output_layer_b)
 
-    return output_layer
+    return output_layer_a
 
 def deconv_part(input_layer, copied_layer, filter=64, padding_same = True):
     """
@@ -58,12 +63,18 @@ def deconv_part(input_layer, copied_layer, filter=64, padding_same = True):
         pad_type = 'valid'
 
     upsample_layer = UpSampling2D()(input_layer)
-    layer1 = Conv2D(filter, 3, activation='relu', padding=pad_type)(upsample_layer)
-    layer1 = concatenate([layer1, copied_layer],axis=3)
-    layer2 = Conv2D(filter, 3, activation='relu', padding=pad_type)(layer1)
-    output_layer = Conv2D(filter, 3, activation='relu', padding=pad_type)(layer2)
+    layer1 = Conv2D(filter, 3, padding=pad_type)(upsample_layer)
+    layer1_b = BatchNormalization()(layer1)
+    layer1_a = Activation(activation='relu')(layer1_b)
+    layer1 = concatenate([layer1_a, copied_layer],axis=3)
+    layer2 = Conv2D(filter, 3, padding=pad_type)(layer1)
+    layer2_b = BatchNormalization()(layer2)
+    layer2_a = Activation(activation='relu')(layer2_b)
+    output_layer = Conv2D(filter, 3, padding=pad_type)(layer2_a)
+    output_layer_b = BatchNormalization()(output_layer)
+    output_layer_a = Activation(activation='relu')(output_layer_b)
 
-    return output_layer
+    return output_layer_a
 
 def create_unet_model(shape):
 
@@ -110,10 +121,10 @@ def create_images_answers(dir_path, teacher=False, filename=False):
     else:
         return images
 
-def prepare_data():
-    train_images = create_images_answers(TRAIN_IMG_DIR)
+def prepare_data(filename=False):
+    train_images, train_filenames = create_images_answers(TRAIN_IMG_DIR, filename=True)
     train_teacher = create_images_answers(TRAIN_ANNOT_DIR, teacher=True)
-    valid_images = create_images_answers(VALID_IMG_DIR)
+    valid_images, valid_filenames = create_images_answers(VALID_IMG_DIR, filename=True)
     valid_teacher = create_images_answers(VALID_ANNOT_DIR, teacher=True)
     test_images, test_filenames = create_images_answers(TEST_IMG_DIR, filename=True)
 
@@ -127,15 +138,17 @@ def prepare_data():
     v_shape = valid_teacher.shape
     train_teacher = train_teacher.reshape(t_shape[0], t_shape[1], t_shape[2], 1)
     valid_teacher = valid_teacher.reshape(v_shape[0], v_shape[1], v_shape[2], 1)
-
-    return train_images, train_teacher, valid_images, valid_teacher, test_images, test_filenames
+    if filename:
+        return train_images, train_filenames, train_teacher, valid_images, valid_filenames, valid_teacher, test_images, test_filenames
+    else:
+        return train_images, train_teacher, valid_images, valid_teacher, test_images, test_filenames
 
 def create_callbacks():
     callbacks = [KC.TensorBoard(),
                 HistoryCheckpoint(filepath='chart/LearningCurve_{history}.png'
                                 , verbose=1
                                 , period=2
-                                , targets=[TargetHistory.Loss, TargetHistory.DiceCoef, TargetHistory.ValidationLoss, TargetHistory.ValidationDiceCoef]
+                                , targets=[TargetHistory.Loss, TargetHistory.ValidationLoss]
                                ),
                 KC.ModelCheckpoint(filepath=BEST_MODEL_PATH,
                 verbose=1,
@@ -145,15 +158,18 @@ def create_callbacks():
 
     return callbacks
 
-def predict_output(model, test_images, test_filenames):
-    pred_images = model.predict(test_images)
+def predict_output(model, images, filenames):
+    pred_images = model.predict(images)
+    pred_images *= 255
+    pred_images = pred_images.astype(np.uint8)
     for j, image in enumerate(pred_images):
-        name = test_filenames[j].split('/')[-1]
-        cv2.imwrite(PRED_DIR + name, image)
+        name = filenames[j].split('/')[-1]
+        #name = 'valid{}.png'.format(str(j))
+        cv2.imwrite(PRED_DIR + name, image) 
     shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)
 
-def main():
-    train, train_teacher, valid, valid_teacher, test_images, test_filenames = prepare_data()
+def train():
+    train, train_teacher, valid, valid_teacher, test, test_filenames = prepare_data()
     print('shape of train', train.shape)
     print('shape of train teacher', train_teacher.shape)
     print('shape of valid', valid.shape)
@@ -168,7 +184,34 @@ def main():
     history = model.fit(train, train_teacher, batch_size=BATCH_SIZE, epochs=EPOCHS, verbose=VERBOSE, validation_data=(valid, valid_teacher), shuffle=True, callbacks=callbacks)
 
     model.save_weights(COMP_MODEL_PATH)
-    predict_output(model, test_images, test_filenames)
+    predict_output(model, test, test_filenames)
+
+def predict_best():
+    train, train_filenames, train_teacher, valid, valid_filenames, valid_teacher, test, test_filenames = prepare_data(filename=True)
+    shape = (train.shape[1], train.shape[2], train.shape[3])
+    model = create_unet_model(shape)
+    model.compile(loss=dice_loss, optimizer=Adam(lr=LEARNING_RATE), metrics=[dice_coef])
+    model.summary()
+    model.load_weights(BEST_MODEL_PATH)
+    for images, filenames in ((train, train_filenames), (valid, valid_filenames), (test, test_filenames)):
+        predict_output(model, images, filenames)
+
+def test():
+    train, train_teacher, valid, valid_teacher, test_images, test_filenames = prepare_data()
+    shape = valid_teacher.shape
+    valid_teacher = valid_teacher.reshape(shape[0], shape[1], shape[2])
+    for j, image in enumerate(valid_teacher):
+        print(image.shape)
+        name = 'test{}.png'.format(str(j))
+        cv2.imwrite(PRED_DIR + name, image)
+    shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)    
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) < 2:
+        train()
+    else:
+        if sys.argv[1] == 'pred':
+            predict_best()
+        else:
+            test()
+            #print('argument should be pred, otherwise it starts learning')
