@@ -20,17 +20,25 @@ NUM_CLASSES = 1
 LEARNING_RATE = 0.001
 COLOR_MODE = 1
 SIZE = 128
-BATCH_SIZE = 43
+BATCH_SIZE = 50 #訓練データ数に合わせる
 EPOCHS = 500
 VERBOSE = 1
-TRAIN_IMG_DIR = 'images/train/original/'
-TRAIN_ANNOT_DIR = 'images/train/annot/'
-VALID_IMG_DIR = 'images/valid/original/'
-VALID_ANNOT_DIR = 'images/valid/annot/'
-TEST_IMG_DIR = 'images/test/'
-BEST_MODEL_PATH = 'models/best_model_weights.hdf5'
-COMP_MODEL_PATH = 'models/comp_model_weights.hdf5'
-PRED_DIR = 'images/pred/'
+IMG_BASE_DIR = 'aug_images'
+TRAIN_DIR = 'train'
+VALID_DIR = 'valid'
+TEST_DIR = 'test'
+ORIGINAL_DIR = 'original'
+ANNOT_DIR = 'annot'
+PRED_DIR = 'pred'
+MODEL_DIR = 'models'
+TRAIN_IMG_DIR = os.path.join(IMG_BASE_DIR, TRAIN_DIR, ORIGINAL_DIR)
+TRAIN_ANNOT_DIR = os.path.join(IMG_BASE_DIR, TRAIN_DIR, ANNOT_DIR)
+VALID_IMG_DIR = os.path.join(IMG_BASE_DIR, VALID_DIR, ORIGINAL_DIR)
+VALID_ANNOT_DIR = os.path.join(IMG_BASE_DIR, VALID_DIR, ANNOT_DIR)
+TEST_IMG_DIR = os.path.join(IMG_BASE_DIR, TEST_DIR)
+BEST_MODEL_PATH = os.path.join(MODEL_DIR, 'best_model_weights_aug.hdf5')
+COMP_MODEL_PATH = os.path.join(MODEL_DIR, 'comp_model_weights_aug.hdf5')
+PRED_RESULT_DIR = os.path.join(IMG_BASE_DIR, PRED_DIR)
 
 def conv_part(input_layer, filter=64, padding_same = True, first_layer = False):
     """
@@ -159,7 +167,13 @@ def create_callbacks():
 
     return callbacks
 
-def predict_output(model, images, filenames):
+def predict_output(model, images, filenames, flag=0):
+    if flag == 0:
+        save_dir = os.path.join(PRED_RESULT_DIR, TRAIN_DIR)
+    elif flag == 1:
+        save_dir = os.path.join(PRED_RESULT_DIR, VALID_DIR)
+    else:
+        save_dir = os.path.join(PRED_RESULT_DIR, TEST_DIR)
     pred_images = model.predict(images)
     images *= 255
     pred_images *= 255
@@ -167,10 +181,9 @@ def predict_output(model, images, filenames):
     pred_images = pred_images.astype(np.uint8)
     for j, pred_image in enumerate(pred_images):
         name = filenames[j].split('/')[-1]
-        #name = 'valid{}.png'.format(str(j))
+        save_path = os.path.join(save_dir, name)
         res = overlay(images[j], pred_image)
-        cv2.imwrite(PRED_DIR + name, res) 
-    shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)
+        cv2.imwrite(save_path, res) 
 
 def train():
     train, train_teacher, valid, valid_teacher, test, test_filenames = prepare_data()
@@ -185,6 +198,7 @@ def train():
     model.summary()
     # plot_model(model)
     callbacks = create_callbacks()
+    #batch_size = train.shape[0] // 4
     history = model.fit(train, train_teacher, batch_size=BATCH_SIZE, epochs=EPOCHS, verbose=VERBOSE, validation_data=(valid, valid_teacher), shuffle=True, callbacks=callbacks)
 
     model.save_weights(COMP_MODEL_PATH)
@@ -197,18 +211,9 @@ def predict_best():
     model.compile(loss=dice_loss, optimizer=Adam(lr=LEARNING_RATE), metrics=[dice_coef])
     model.summary()
     model.load_weights(BEST_MODEL_PATH)
-    for images, filenames in ((train, train_filenames), (valid, valid_filenames), (test, test_filenames)):
-        predict_output(model, images, filenames)
-
-def test():
-    train, train_teacher, valid, valid_teacher, test_images, test_filenames = prepare_data()
-    shape = valid_teacher.shape
-    valid_teacher = valid_teacher.reshape(shape[0], shape[1], shape[2])
-    for j, image in enumerate(valid_teacher):
-        print(image.shape)
-        name = 'test{}.png'.format(str(j))
-        cv2.imwrite(PRED_DIR + name, image)
-    shutil.make_archive('pred_images', 'zip', root_dir = PRED_DIR)    
+    for i, data in enumerate(((train, train_filenames), (valid, valid_filenames), (test, test_filenames))):
+        predict_output(model, data[0], data[1], flag=i)
+    shutil.make_archive('pred_images', 'zip', root_dir = PRED_RESULT_DIR)
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
