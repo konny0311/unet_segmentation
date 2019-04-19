@@ -95,6 +95,7 @@ def create_annotation_img(anno_json, inp_img_path, out_mask_path):
 
     seg_img = None
     reg_colors = random_colors(len(CLASS_LIST))
+    img = np.zeros(np.shape(org_img), dtype=np.uint8)
     for k, shape in enumerate(jf['shapes']):
         contours = shape['points']
         if not shape['label'] in CLASS_LIST:
@@ -111,7 +112,7 @@ def create_annotation_img(anno_json, inp_img_path, out_mask_path):
         mask = contours
         img_g = create_mask_image(np.shape(org_img), mask, draw_type=DrawType.POLYGON)
         #img = cv2.cvtColor(img_g, cv2.COLOR_GRAY2BGR)
-        img = np.zeros(np.shape(org_img), dtype=np.uint8)
+        #img = np.zeros(np.shape(org_img), dtype=np.uint8)
         if img is None:
             continue
         img[img_g > 100] = reg_colors[label_idx]
